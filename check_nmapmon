@@ -1,0 +1,215 @@
+#!/usr/bin/perl -w
+#=============================================================================
+# $Id: check_nmapmon,v 1.2 2005/12/21 03:42:28 adam Exp $
+#
+# check_nmapmon.pl - nagios plugin 
+#
+# Copyright (C) 2005 Adam Kaufman
+#=============================================================================
+use strict;
+use lib "/usr/local/libexec/nagios" ;
+use utils qw($TIMEOUT %ERRORS &print_revision &support);
+
+use Getopt::Long;
+Getopt::Long::Configure('bundling');
+
+my $PROGNAME = "check_nmapmon";
+
+my $status;
+my $state = "UNKNOWN";
+my $answer = "unknown";
+my $hostname;
+my $opt_h;
+my $opt_V;
+my $root_dir;
+my $sitename;
+my $handle;
+my $scan;
+
+
+# Just in case of problems, let's not hang Nagios
+$SIG{'ALRM'} = sub {
+     print ("ERROR: sig alarm event caught $hostname\n");
+     exit $ERRORS{"UNKNOWN"};
+};
+alarm($TIMEOUT);
+
+
+
+#Option checking
+$status = GetOptions(
+		"R=s" => \$root_dir, "root_dir=s" => \$root_dir,
+		"S=s" => \$sitename, "sitename=s" => \$sitename,
+		"V"   => \$opt_V,    "version"    => \$opt_V,
+		"h"   => \$opt_h,    "help"       => \$opt_h);
+
+if ($status == 0)
+{
+	print_help() ;
+	exit $ERRORS{'WARNING'};
+}
+
+
+if ($opt_V) {
+	print_revision($PROGNAME,'$Revision: 1.2 $ ');
+	exit $ERRORS{'OK'};
+}
+
+if ($opt_h) {
+	print_help();
+	exit $ERRORS{'OK'};
+}
+
+#if (! utils::is_hostname($hostname)){
+#	usage();
+#	exit $ERRORS{"UNKNOWN"};
+#}
+
+if ($root_dir) {
+    test_directory($root_dir) 
+} else {
+    printf("WARNING: no root dir | null\n");
+    exit $ERRORS{"WARNING"};
+}
+
+if ($sitename) {
+    my $site_dir = "$root_dir/$sitename";
+    test_directory($site_dir) 
+} else {
+    printf("WARNING: no sitename | null\n");
+    exit $ERRORS{"WARNING"};
+}
+
+my $log_dir = "$root_dir/$sitename/logs";
+test_directory($log_dir);
+
+
+# Check Analysis Results
+my $logfile = "$log_dir/log";
+if (-s $logfile){
+    my $ec = get_exit_status($logfile);
+
+    if ($ec == 0) {
+        $state = "OK";
+        $answer = sprintf("no changes detected for %s", $sitename);  
+    }
+
+    if ($ec == 1) {
+        $state = "CRITICAL";
+        $answer = sprintf("changes detected for %s", $sitename);  
+    }
+
+    if ($ec == 2) {
+        $state = "WARNING";
+        $answer = sprintf("problems encountered for %s", $sitename);  
+    }
+
+    printf("%s: %s [%d]\n", $state, $answer, $ec);  
+    exit $ERRORS{$state};
+} else {
+        $state = "WARNING";
+        printf("%s: cannot find %s\n", 
+            $state, $logfile);
+        exit $ERRORS{$state};
+}
+
+
+print ("$state: $answer\n");
+exit $ERRORS{$state};
+
+
+#-----------------------------------------------------------------------------
+# Check for valid directory
+#-----------------------------------------------------------------------------
+sub test_directory {
+    my $dir = shift();
+
+    if (! -r $dir){
+        printf("WARNING: %s is not readable\n", $dir);
+        exit $ERRORS{"WARNING"};
+    }
+    if (! -d $dir){
+        printf("WARNING: invalid directory | %s\n", $dir);
+        exit $ERRORS{"WARNING"};
+    }
+    return 1;
+}
+
+
+#-----------------------------------------------------------------------------
+# read log file to determine exit status
+# TODO: Logfile is gzipped!  Requires decompression
+#-----------------------------------------------------------------------------
+sub get_exit_status {
+    my $filename = shift();
+    my $status = 0;
+
+    open(LOG, "<$filename") || die ("unable to open %s\n", $filename);
+    while(<LOG>) {
+        chomp();
+        if ( /^scandiff-exit-status: (\d+)/ ) { $status = $1; }
+    }
+    close(LOG);
+    return $status;
+}
+
+
+#-----------------------------------------------------------------------------
+# display usage information
+#-----------------------------------------------------------------------------
+sub usage {
+	printf "\nMissing arguments!\n";
+	printf "\n";
+	printf "check_nmapmon -R <ROOTDIR> -S <SITENAME>\n";
+	printf "\n\n";
+	support();
+	exit $ERRORS{"UNKNOWN"};
+}
+
+
+#-----------------------------------------------------------------------------
+#
+#-----------------------------------------------------------------------------
+sub print_help {
+	printf "check_nmapmon plugin for Nagios monitors changes in nmap \n";
+  	printf "scan results for the target site\n";
+	printf "\nUsage:\n";
+ 	printf "   -R (--root_dir)   Root Directory (required)\n";
+ 	printf "   -S (--sitename)   Site Name (required)\n";
+	printf "   -V (--version)    Plugin version\n";
+	printf "   -h (--help)       usage help \n\n";
+	print_revision($PROGNAME, '$Revision: 1.2 $');
+}
+
+__END__
+
+=head1 NAME
+
+check_nmapmon - plugin for Nagios network monitor
+
+=head1 SYNOPSIS
+
+check_nmapmon [-H] [-V] -R root_dir -S sitename
+
+=head1 DESCRIPTION
+
+monitors changes in nmap scan results for the target site
+
+=head1 OPTIONS
+
+=over
+
+=item -R root directory
+
+=item -S site name
+
+=item -V plugin version
+
+=item -H help
+
+=back
+
+=head1 AUTHOR
+
+Adam Kaufman
+
